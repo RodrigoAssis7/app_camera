@@ -19,9 +19,10 @@ from ultralytics import YOLO
 
 MODELO = os.getenv("MODELO", "yolov8n.pt")
 CONF = float(os.getenv("CONF", "0.4"))
-IMGSZ = int(os.getenv("IMGSZ", "960"))
+IMGSZ = int(os.getenv("IMGSZ", "640"))
 MAX_BYTES = 15 * 1024 * 1024
-LARGURA_MAX_RESPOSTA = 1280
+LADO_MAX = 960
+LARGURA_MAX_RESPOSTA = 960
 
 app = FastAPI(title="Detector de objetos na mesa")
 model = YOLO(MODELO)  # carregado uma vez so, ao iniciar o servidor
@@ -50,18 +51,40 @@ const fotoEl = document.getElementById('foto');
 const msgEl = document.getElementById('msg');
 const listaEl = document.getElementById('lista');
 const imgEl = document.getElementById('resultado');
+
+async function reduzir(arq, lado = 960) {
+  const url = URL.createObjectURL(arq);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const k = Math.min(1, lado / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * k);
+    c.height = Math.round(img.naturalHeight * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return await new Promise(res => c.toBlob(res, 'image/jpeg', 0.9));
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 fotoEl.addEventListener('change', async () => {
   const arq = fotoEl.files[0];
   if (!arq) return;
   msgEl.textContent = 'Analisando...';
   listaEl.innerHTML = '';
   imgEl.hidden = true;
-  const fd = new FormData();
-  fd.append('arquivo', arq);
   try {
+    const blob = await reduzir(arq);
+    const fd = new FormData();
+    fd.append('arquivo', blob, 'foto.jpg');
     const r = await fetch('/detectar', { method: 'POST', body: fd });
-    if (!r.ok) throw new Error((await r.json()).detail || r.status);
-    const d = await r.json();
+    const txt = await r.text();
+    let d;
+    try { d = JSON.parse(txt); }
+    catch { throw new Error('Servidor sem resposta valida (HTTP ' + r.status + '). Possivel falta de memoria.'); }
+    if (!r.ok) throw new Error(d.detail || r.status);
     msgEl.textContent = d.total ? d.total + ' objeto(s) em ' + d.ms + ' ms' : 'Nada detectado';
     d.objetos.forEach(o => {
       const li = document.createElement('li');
@@ -101,9 +124,14 @@ def detectar(arquivo: UploadFile = File(...), com_imagem: bool = True):
     dados = arquivo.file.read(MAX_BYTES + 1)
     if len(dados) > MAX_BYTES:
         raise HTTPException(413, "Imagem maior que 15 MB")
-    img = cv2.imdecode(np.frombuffer(dados, np.uint8), cv2.IMREAD_COLOR)
+    img = cv2.imdecode(np.frombuffer(dados, np.uint8), cv2.IMREAD_REDUCED_COLOR_2)
+    del dados
     if img is None:
         raise HTTPException(400, "Arquivo nao e uma imagem valida")
+    h, w = img.shape[:2]
+    if max(h, w) > LADO_MAX:
+        k = LADO_MAX / max(h, w)
+        img = cv2.resize(img, (int(w * k), int(h * k)), interpolation=cv2.INTER_AREA)
 
     t0 = time.perf_counter()
     with trava:
