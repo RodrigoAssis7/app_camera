@@ -1,20 +1,35 @@
 # app_camera
 
-Detector de objetos em imagens feito em Python com YOLOv8 (Ultralytics), OpenCV e FastAPI. Funciona em fotos, na webcam e pelo celular, por meio de uma página web que tira a foto e mostra os objetos encontrados.
+Detector de objetos em imagens com Python, YOLOv8, OpenCV e FastAPI. Tire uma foto da mesa pelo celular, o servidor identifica os objetos e devolve a imagem com as caixas e a contagem. Roda no computador, na rede local e na nuvem, de graça.
 
-O projeto começou como um protótipo para avaliar se um modelo pronto consegue identificar os objetos sobre uma mesa a partir de uma foto, e onde estão os limites dessa abordagem.
+[Demonstração: link do Render e prints da página no celular]
+
+## Destaques
+
+- Do protótipo ao app publicado: script de linha de comando, webcam ao vivo, API REST e página web para celular.
+- Rodando no plano gratuito do Render (512 MB de RAM) depois de um trabalho real de otimização de memória.
+- Comparação medida entre dois modelos (`yolov8n` e `yolov8m`) em fotos reais, com limites documentados.
+- Relatório em CSV, imagens anotadas e API com documentação interativa em `/docs`.
+
+## Como funciona
+
+```
+Celular (página web) -> reduz a foto -> POST /detectar -> FastAPI + YOLOv8 -> JSON + imagem anotada
+```
+
+O mesmo núcleo de detecção atende o script (`detectar.py`), o modo ao vivo e a API (`app.py`).
 
 ## Funcionalidades
 
-- Detecção em uma foto ou em uma pasta de fotos, com imagens anotadas e relatório em CSV.
-- Captura de foto pela webcam e detecção ao vivo, com FPS e contagem de objetos na tela.
-- API em FastAPI com endpoint de detecção que devolve JSON (objetos, quantidades, caixas e imagem anotada).
-- Página web simples para o celular tirar a foto e ver o resultado, usando a rede local.
-- Escolha do modelo (`yolov8n` ou `yolov8m`), da confiança mínima e da resolução.
+- Detecção em uma foto ou em uma pasta, com imagens anotadas e CSV.
+- Captura pela webcam e detecção em tempo real, com FPS e contagem na tela.
+- Endpoint que devolve objetos, quantidades, caixas e a imagem anotada.
+- Página para o celular tirar a foto e ver o resultado.
+- Escolha do modelo, da confiança mínima e da resolução.
 
 ## Tecnologias
 
-Python, YOLOv8 (Ultralytics), OpenCV, FastAPI e Uvicorn.
+Python, YOLOv8 (Ultralytics), OpenCV, FastAPI, Uvicorn e PyTorch (CPU).
 
 ## Instalação
 
@@ -24,67 +39,61 @@ source .venv/bin/activate      # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-Os pesos do modelo são baixados automaticamente na primeira execução.
+Os pesos do modelo são baixados na primeira execução.
 
 ## Como usar
 
-Fotos e webcam:
-
 ```
 python detectar.py fotos                  # todas as fotos da pasta
-python detectar.py --camera               # captura uma foto da webcam e detecta
-python detectar.py --ao-vivo              # webcam em tempo real (tecla q sai)
+python detectar.py --camera               # uma foto da webcam
+python detectar.py --ao-vivo              # webcam em tempo real (q sai)
 python detectar.py fotos --modelo yolov8m.pt --conf 0.4 --imgsz 1280
 ```
 
-Para cada foto, o terminal mostra os objetos e o tempo de processamento, a imagem com as caixas vai para `saida/` e um CSV resume os resultados.
-
-API e celular:
+API e celular na rede local:
 
 ```
 uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-Com o celular no mesmo Wi-Fi, abra `http://IP_DO_COMPUTADOR:8000` e toque em "Tirar foto da mesa". A documentação interativa fica em `/docs`. O modelo usado pode ser trocado pela variável `MODELO` (por exemplo `MODELO=yolov8m.pt`). Se a página não abrir no celular, verifique o firewall do computador e a porta 8000.
+Com o celular no mesmo Wi-Fi, abra `http://IP_DO_COMPUTADOR:8000` e toque em "Tirar foto da mesa". O modelo muda pela variável `MODELO` (ex.: `MODELO=yolov8m.pt`). Se a página não abrir, libere a porta 8000 no firewall para a rede local.
 
-Endpoints:
+Endpoints: `GET /` (página), `POST /detectar` (detecção em JSON), `GET /saude` (modelo e parâmetros em uso).
 
-- `GET /`: página para o celular.
-- `POST /detectar`: recebe a imagem e devolve o resultado em JSON.
-- `GET /saude`: modelo e parâmetros em uso.
+## Publicação no Render
 
-## Resultados dos testes
+O app roda no plano gratuito com o `yolov8n`. O servidor chegou a ser encerrado por falta de memória, e o problema foi resolvido assim:
 
-Testes com 11 imagens, comparando os dois modelos. A amostra é pequena e mostra tendências, não uma taxa de acerto.
+- Inferência em `imgsz=640`.
+- Foto reduzida no celular antes do envio e de novo no servidor.
+- PyTorch na versão CPU no `requirements.txt`, bem menor que a versão com CUDA.
 
-| Objeto | yolov8n | yolov8m |
-|---|---|---|
-| Caneca | certo | certo |
-| Despertador | certo | certo |
-| Tesoura | erro | certo |
-| Grampeador | nada detectado | erro |
-| Chave | erro | erro |
-| Clipes de papel | erro | erro |
+O diagnóstico partiu dos logs do Render, sem alterar código às cegas. No plano gratuito o serviço entra em repouso sem uso, então a primeira requisição demora mais. Para o `yolov8m`, o ideal é rodar localmente.
 
-- O modelo maior melhora a detecção de objetos que ele conhece, principalmente em imagens pequenas.
-- Objetos fora das classes do modelo não recebem "não sei" como resposta: ele escolhe a classe mais parecida, e costuma errar.
-- Baixar a confiança mínima piorou os resultados, com mais classificações erradas.
-- Uma mão segurando um objeto pode gerar um falso `person`.
-- Em CPU, o `yolov8m` leva em torno de 1 a 2,5 segundos por foto.
+O que os testes mostraram:
+
+- O modelo maior detecta melhor os objetos que conhece, principalmente em imagens pequenas.
+- Fora das 80 classes do COCO, o modelo não responde "não sei": escolhe a classe mais parecida e costuma errar.
+- Baixar a confiança mínima piorou o resultado, com mais classificações erradas.
+- Uma mão segurando o objeto pode gerar um falso `person`.
+- Em CPU, o `yolov8m` leva cerca de 1 a 2,5 s por foto.
+
+Conclusão: modelos prontos resolvem bem objetos comuns, mas objetos específicos pedem outra abordagem, o que define os próximos passos.
 
 ## Limitações
 
-- Os modelos padrão reconhecem apenas as 80 classes do conjunto COCO.
-- A contagem pode errar com objetos próximos, parcialmente cobertos ou pequenos.
-- A API não tem autenticação e deve ser usada só em rede de confiança.
-- A biblioteca Ultralytics usa a licença AGPL-3.0, o que exige atenção em uso comercial.
+- Apenas as 80 classes do COCO nos modelos padrão.
+- A contagem pode errar com objetos próximos, cobertos ou pequenos.
+- No Render gratuito só cabe o `yolov8n`.
+- A API não tem autenticação, então publicada ela fica aberta a quem tiver o link.
+- A Ultralytics usa licença AGPL-3.0, o que exige atenção em uso comercial.
 
 ## Próximos passos
 
 - Testar o YOLO-World, que permite definir os objetos procurados.
 - Avaliar uma API de IA com visão para objetos específicos.
-- Ignorar classes indesejadas, como `person`, e adicionar autenticação à API.
+- Ignorar classes indesejadas, como `person`, e adicionar autenticação.
 
 ## Status
 
-Protótipo funcional: detecção em fotos, na webcam e pelo celular na rede local, em avaliação para definir o modelo mais adequado.
+Protótipo funcional e publicado: detecção em fotos, webcam e celular, na rede local e na nuvem.
